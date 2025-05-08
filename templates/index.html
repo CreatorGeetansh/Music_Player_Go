@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Harmony - Music Player</title>
+    <!-- Ensure this path matches your CSS file location -->
+    <link rel="stylesheet" href="/static/styles/main.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-wrapper">
+        <aside class="sidebar">
+            <div class="logo"><i class="fa-solid fa-waveform"></i><h1>Harmony</h1></div>
+            <nav class="main-nav">
+                <ul>
+                    <li class="active"><i class="fa-solid fa-house"></i><span>Home</span></li>
+                    <li><i class="fa-solid fa-magnifying-glass"></i><span>Search</span></li>
+                    <li><i class="fa-solid fa-compass"></i><span>Explore</span></li>
+                    <li><i class="fa-solid fa-bookmark"></i><span>Library</span></li>
+                </ul>
+            </nav>
+            <div class="library-section">
+                <h2>Your Library</h2>
+                <ul id="sidebarPlaylist" class="dynamic-playlist-items"></ul>
+                <div class="library-item" id="createPlaylistBtn"><i class="fa-solid fa-plus"></i><span>Create Playlist</span></div>
+                <div class="library-item" id="uploadTrigger"><i class="fa-solid fa-cloud-arrow-up"></i><span>Upload Music</span></div>
+            </div>
+        </aside>
+
+        <main class="main-content">
+            <header class="top-header">
+                <div class="header-controls">
+                    <div class="nav-buttons">
+                        <button class="nav-btn"><i class="fa-solid fa-chevron-left"></i></button>
+                        <button class="nav-btn"><i class="fa-solid fa-chevron-right"></i></button>
+                    </div>
+                    <!-- Updated Search Bar -->
+                    <div class="search-bar-container">
+                        <div class="musicbrainz-search-bar"> <!-- Keep class or rename -->
+                            <i class="fa-solid fa-magnifying-glass"></i>
+                            <input type="text" id="jamendoSearchInput" placeholder="Search Jamendo for music..."> <!-- Updated ID & Placeholder -->
+                            <button id="jamendoSearchButton" aria-label="Search Jamendo"><i class="fa-solid fa-search"></i></button> <!-- Updated ID -->
+                        </div>
+                    </div>
+                </div>
+                <div class="user-menu">
+                    <button class="upgrade-btn">Upgrade</button>
+                    <div class="user-profile"><i class="fa-solid fa-user"></i></div>
+                </div>
+            </header>
+
+            <div class="content-container">
+                <section class="hero-section">
+                    <div class="hero-content"><h2>Welcome back</h2></div>
+                    <!-- Maybe add Jamendo charts/recommendations here later -->
+                </section>
+
+                <section class="playlist-section" id="mainPlaylistSection">
+                    <div class="section-header"><h2 id="mainPlaylistTitle">Your Playlist Queue</h2></div>
+                    <div class="playlist-header">
+                        <div class="playlist-header-item">#</div>
+                        <div class="playlist-header-item">Title</div>
+                        <div class="playlist-header-item">Artist</div>
+                        <div class="playlist-header-item">Album</div>
+                        <div class="playlist-header-item"><i class="fa-regular fa-clock"></i></div>
+                    </div>
+                    <div id="mainContentPlaylistTracks" class="playlist-tracks"></div>
+                </section>
+            </div>
+        </main>
+
+        <footer class="now-playing-bar">
+            <div class="now-playing-left">
+                <img src="/static/images/default-cover.jpg" alt="Album Art" id="nowPlayingAlbumArt">
+                <div class="now-playing-info">
+                    <div class="song-title" id="nowPlayingTitle">No Song Playing</div>
+                    <div class="song-artist" id="nowPlayingArtist">---</div>
+                </div>
+                <button class="like-button" id="likeBtn"><i class="fa-regular fa-heart"></i></button>
+            </div>
+            <div class="now-playing-center">
+                 <div class="player-controls">
+                    <button class="control-button" id="shuffleBtn"><i class="fa-solid fa-shuffle"></i></button>
+                    <button class="control-button" id="prevBtn"><i class="fa-solid fa-backward-step"></i></button>
+                    <button class="control-button play-pause" id="playPauseBtn" aria-label="Play"><i class="fa-solid fa-play"></i></button>
+                    <button class="control-button" id="nextBtn"><i class="fa-solid fa-forward-step"></i></button>
+                    <button class="control-button" id="repeatBtn"><i class="fa-solid fa-repeat"></i></button>
+                </div>
+                <div class="playback-bar">
+                    <div class="playback-time" id="currentTime">0:00</div>
+                    <div class="progress-container"><input type="range" id="progressBar" class="progress-bar-input" value="0" min="0" step="0.1"></div>
+                    <div class="playback-time" id="totalDuration">0:00</div>
+                </div>
+            </div>
+             <div class="now-playing-right">
+                <button class="control-button" id="lyricsBtn"><i class="fa-solid fa-microphone"></i></button>
+                <button class="control-button" id="queueBtn"><i class="fa-solid fa-list"></i></button>
+                <button class="control-button" id="devicesBtn"><i class="fa-solid fa-desktop"></i></button>
+                <div class="volume-container">
+                    <button class="control-button" id="volumeIconBtn"><i id="volumeIcon" class="fa-solid fa-volume-high"></i></button>
+                    <input type="range" id="volumeSlider" class="volume-bar-input" min="0" max="1" step="0.01" value="0.8">
+                </div>
+            </div>
+        </footer>
+    </div>
+
+    <div class="upload-modal-container" id="uploadModalContainer">
+         <div class="upload-modal">
+            <div class="modal-header"><h3>Upload Music</h3><button class="close-modal" id="closeUploadModalBtn"><i class="fa-solid fa-xmark"></i></button></div>
+            <div class="upload-area" id="dropZone">
+                <i class="fa-solid fa-cloud-arrow-up"></i><p>Drag and drop files here</p><p class="upload-subtitle">or</p>
+                <label for="fileUploadInput" class="upload-btn">Choose Files</label>
+                <input type="file" id="fileUploadInput" accept=".mp3,.wav,.ogg,.m4a,.flac" multiple hidden>
+            </div>
+            <div class="upload-formats"><p>Supported formats: MP3, WAV, OGG, M4A, FLAC</p></div>
+            <ul id="uploadProgressList"></ul>
+        </div>
+    </div>
+
+    <audio id="audioPlayer" preload="metadata"></audio>
+    <!-- Ensure this path matches your JS file location -->
+    <script src="/static/scripts/main.js"></script>
+</body>
+</html>
