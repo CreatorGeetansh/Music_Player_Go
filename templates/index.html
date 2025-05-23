@@ -45,15 +45,79 @@
                         </div>
                     </div>
                 </div>
+                <!-- index.html additions -->
+<div class="auth-modal-container" id="loginModalContainer">
+    <div class="auth-modal">
+        <div class="modal-header">
+            <h3>Login</h3>
+            <button class="close-modal" id="closeLoginModalBtn"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <form id="loginForm" class="auth-form">
+            <div class="form-group">
+                <label for="loginUsername">Username</label>
+                <input type="text" id="loginUsername" name="username" required>
+            </div>
+            <div class="form-group">
+                <label for="loginPassword">Password</label>
+                <input type="password" id="loginPassword" name="password" required>
+            </div>
+            <p class="auth-error-message" id="loginErrorMessage"></p>
+            <button type="submit" class="auth-submit-btn">Login</button>
+            <p class="auth-switch">Don't have an account? <a href="#" id="switchToRegister">Register here</a></p>
+        </form>
+    </div>
+</div>
+
+<div class="auth-modal-container" id="registerModalContainer">
+    <div class="auth-modal">
+        <div class="modal-header">
+            <h3>Register</h3>
+            <button class="close-modal" id="closeRegisterModalBtn"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <form id="registerForm" class="auth-form">
+            <div class="form-group">
+                <label for="registerUsername">Username</label>
+                <input type="text" id="registerUsername" name="username" required>
+            </div>
+            <div class="form-group">
+                <label for="registerPassword">Password (min 6 chars)</label>
+                <input type="password" id="registerPassword" name="password" required minlength="6">
+            </div>
+             <div class="form-group">
+                <label for="registerConfirmPassword">Confirm Password</label>
+                <input type="password" id="registerConfirmPassword" name="confirmPassword" required>
+            </div>
+            <p class="auth-error-message" id="registerErrorMessage"></p>
+            <button type="submit" class="auth-submit-btn">Register</button>
+            <p class="auth-switch">Already have an account? <a href="#" id="switchToLogin">Login here</a></p>
+        </form>
+    </div>
+</div>
+
+<!-- Update User Menu in top-header -->
+<div class="user-menu">
+    <!-- This part will be dynamically shown/hidden by JS -->
+    <div id="guestView">
+        <button class="auth-action-btn" id="loginTriggerBtn">Login</button>
+        <button class="auth-action-btn" id="registerTriggerBtn">Register</button>
+    </div>
+    <div id="userLoggedInView" style="display: none; align-items: center; gap: 10px;">
+        <span id="loggedInUsernameDisplay" style="font-weight: bold;"></span>
+        <button class="auth-action-btn" id="logoutBtn">Logout</button>
+        <!-- Keep your .user-profile icon if needed -->
+         <div class="user-profile"><i class="fa-solid fa-user"></i></div>
+    </div>
+    <!-- <button class="upgrade-btn">Geetansh</button> -> This was hardcoded, now part of dynamic view -->
+</div>
                 <div class="user-menu">
-                    <button class="upgrade-btn">Upgrade</button>
+                    <button class="upgrade-btn">Geetansh</button>
                     <div class="user-profile"><i class="fa-solid fa-user"></i></div>
                 </div>
             </header>
 
             <div class="content-container">
                 <section class="hero-section">
-                    <div class="hero-content"><h2>Welcome back</h2></div>
+                    <div class="hero-content"><h2>Welcome back, Geetansh & Prateek</h2></div>
                     <!-- Maybe add Jamendo charts/recommendations here later -->
                 </section>
 

@@ -1,7 +1,7 @@
 document.addEventListener('DOMContentLoaded', () => {
-    console.log("DOM fully loaded. Starting main.js (Jamendo + Like/Remove)...");
+    console.log("DOM fully loaded. Starting Harmony Web Player JS (Auth, DB, Jamendo)...");
 
-    // --- DOM Elements ---
+    // --- DOM Elements (Existing & New Auth) ---
     const audioPlayer = document.getElementById('audioPlayer');
     const playPauseBtn = document.getElementById('playPauseBtn');
     const prevBtn = document.getElementById('prevBtn');
@@ -15,506 +15,653 @@ document.addEventListener('DOMContentLoaded', () => {
     const sidebarPlaylistElement = document.getElementById('sidebarPlaylist');
     const mainContentPlaylistTracksElement = document.getElementById('mainContentPlaylistTracks');
     const mainPlaylistTitleElement = document.getElementById('mainPlaylistTitle');
-
     const likeBtn = document.getElementById('likeBtn'); // Footer like button
     const shuffleBtn = document.getElementById('shuffleBtn');
     const repeatBtn = document.getElementById('repeatBtn');
     const volumeIconBtn = document.getElementById('volumeIconBtn');
     const volumeIcon = document.getElementById('volumeIcon');
     const volumeSlider = document.getElementById('volumeSlider');
-
-    // Upload Modal
-    const uploadTrigger = document.getElementById('uploadTrigger');
+    const uploadTrigger = document.getElementById('uploadTrigger'); // Sidebar upload button
     const uploadModalContainer = document.getElementById('uploadModalContainer');
     const closeUploadModalBtn = document.getElementById('closeUploadModalBtn');
     const fileUploadInput = document.getElementById('fileUploadInput');
     const dropZone = document.getElementById('dropZone');
     const uploadProgressList = document.getElementById('uploadProgressList');
-
-    // Search Elements
     const jamendoSearchInput = document.getElementById('jamendoSearchInput');
     const jamendoSearchButton = document.getElementById('jamendoSearchButton');
+    const homeNavItem = document.getElementById('homeNavItem'); // Ensure ID is on Home <li>
+    const likedSongsNavItem = document.getElementById('likedSongsNavItem'); // Ensure ID is on Liked Songs <li>
 
-    // Sidebar Buttons
-    const likedSongsNavItem = document.getElementById('likedSongsNavItem'); // Need to add this ID to your HTML li element
-    const homeNavItem = document.getElementById('homeNavItem'); // Need to add this ID to your Home li element
+    // Auth Modal Elements
+    const loginModalContainer = document.getElementById('loginModalContainer');
+    const registerModalContainer = document.getElementById('registerModalContainer');
+    const closeLoginModalBtn = document.getElementById('closeLoginModalBtn');
+    const closeRegisterModalBtn = document.getElementById('closeRegisterModalBtn');
+    const loginForm = document.getElementById('loginForm');
+    const registerForm = document.getElementById('registerForm');
+    const loginErrorMessage = document.getElementById('loginErrorMessage');
+    const registerErrorMessage = document.getElementById('registerErrorMessage');
+    const switchToRegister = document.getElementById('switchToRegister');
+    const switchToLogin = document.getElementById('switchToLogin');
 
+    // Auth Header Elements
+    const loginTriggerBtn = document.getElementById('loginTriggerBtn');
+    const registerTriggerBtn = document.getElementById('registerTriggerBtn');
+    const guestView = document.getElementById('guestView');
+    const userLoggedInView = document.getElementById('userLoggedInView');
+    const loggedInUsernameDisplay = document.getElementById('loggedInUsernameDisplay');
+    const logoutBtn = document.getElementById('logoutBtn');
 
     // --- State ---
-    let currentInternalPlaylist = []; // Holds local, uploaded, and added Jamendo tracks
-    let displayedPlaylist = [];       // What's currently shown (search results or internal list or liked list)
+    let currentUser = null; // Holds { userId: ..., username: ... } if logged in
+    let currentInternalPlaylist = []; // Holds combined list from server (samples, uploads, liked Jamendo)
+    let displayedPlaylist = [];       // What's currently shown in the main view
     let currentTrackIndex = -1;       // Index relative to displayedPlaylist
     let isPlaying = false;
     let isShuffleActive = false;
     let repeatMode = 0; // 0: none, 1: one, 2: all
-    let currentView = 'internal'; // 'internal', 'search', 'liked' - Tracks current view type
-
-    // Simple in-memory liked songs storage (use Set for efficient ID lookup)
-    let likedSongIds = new Set();
+    let currentView = 'internal'; // 'internal', 'search', 'liked'
+    let likedSongIds = new Set(); // Store IDs of liked songs for quick lookup
 
     const DEFAULT_COVER = '/static/images/default-cover.jpg';
 
     // --- Utility Functions ---
-    console.log("--- Checking Critical DOM Elements ---");
-    function checkElement(id, el) { if (el) { console.log(`Element check: ID '${id}' FOUND.`); } else { console.error(`Element check: ID '${id}' NOT FOUND! Check HTML.`); } return el; }
-    checkElement('audioPlayer', audioPlayer);
-    checkElement('playPauseBtn', playPauseBtn);
-    checkElement('jamendoSearchInput', jamendoSearchInput);
-    checkElement('jamendoSearchButton', jamendoSearchButton);
-    checkElement('sidebarPlaylist', sidebarPlaylistElement);
-    checkElement('mainContentPlaylistTracks', mainContentPlaylistTracksElement);
-    // Add checks for likeBtn, likedSongsNavItem, homeNavItem if you added those IDs
-    console.log("--- DOM Element Check Complete ---");
+    function formatTime(secondsRaw) { const sec = Math.floor(secondsRaw || 0); const min = Math.floor(sec / 60); const rem = sec % 60; return `${min}:${rem < 10 ? '0' : ''}${rem}`; }
+    function displayApiError(element, error) { if (element) element.textContent = error.message || (typeof error === 'string' ? error : 'An unknown error occurred.');}
+    function clearApiError(element) { if(element) element.textContent = ''; }
 
-    function formatTime(secondsRaw) { const sec=Math.floor(secondsRaw||0);const min=Math.floor(sec/60);const rem=sec%60;return `${min}:${rem<10?'0':''}${rem}`; }
-
-    // --- Core Player & UI Update Functions ---
-    async function fetchInitialPlaylist() {
-        console.log("PLAYER: Fetching initial playlist...");
-        // ... (rest of fetchInitialPlaylist is the same, populates currentInternalPlaylist)
+    // --- API Helper ---
+    async function fetchAPI(url, options = {}) {
         try {
-            const response = await fetch('/api/songs');
-            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-            const serverPlaylist = await response.json();
-            console.log("PLAYER: Received initial playlist:", serverPlaylist);
-            currentInternalPlaylist = serverPlaylist.map(song => ({ ...song, id: String(song.id), isLocal: true }));
-            switchToView('internal'); // Set initial view and display playlist
-            if (displayedPlaylist.length > 0) {
-                loadTrack(displayedPlaylist, 0, false); // Load first, don't play
-            } else { updateNowPlayingBarUI(null); }
-        } catch (error) { console.error("PLAYER: Could not fetch initial playlist:", error); updateNowPlayingBarUI(null); }
+            const response = await fetch(url, options);
+            if (!response.ok) {
+                let errorData;
+                try {
+                    errorData = await response.json();
+                } catch (e) {
+                    // If response is not JSON, use status text
+                    throw new Error(response.statusText || `HTTP error! Status: ${response.status}`);
+                }
+                throw new Error(errorData.error || `HTTP error! Status: ${response.status}`);
+            }
+            // If DELETE or other methods that might not return JSON but are OK
+            if (response.status === 204 || response.headers.get("content-length") === "0") {
+                return null; // Or some success indicator
+            }
+            return await response.json();
+        } catch (error) {
+            console.error(`API Error (${options.method || 'GET'} ${url}):`, error);
+            throw error; // Re-throw to be caught by caller
+        }
     }
 
+
+    // --- Authentication UI & Logic ---
+    function openLoginModal() { if (loginModalContainer) loginModalContainer.classList.add('active'); if (registerModalContainer) registerModalContainer.classList.remove('active'); clearApiError(loginErrorMessage); }
+    function closeLoginModal() { if (loginModalContainer) loginModalContainer.classList.remove('active'); }
+    function openRegisterModal() { if (registerModalContainer) registerModalContainer.classList.add('active'); if (loginModalContainer) loginModalContainer.classList.remove('active'); clearApiError(registerErrorMessage); }
+    function closeRegisterModal() { if (registerModalContainer) registerModalContainer.classList.remove('active'); }
+
+    function updateAuthUI() {
+        if (currentUser && currentUser.username) {
+            if (guestView) guestView.style.display = 'none';
+            if (userLoggedInView) userLoggedInView.style.display = 'flex';
+            if (loggedInUsernameDisplay) loggedInUsernameDisplay.textContent = currentUser.username;
+            if (uploadTrigger) uploadTrigger.style.display = 'flex'; // Show upload
+        } else {
+            if (guestView) guestView.style.display = 'flex';
+            if (userLoggedInView) userLoggedInView.style.display = 'none';
+            if (loggedInUsernameDisplay) loggedInUsernameDisplay.textContent = '';
+            if (uploadTrigger) uploadTrigger.style.display = 'none'; // Hide upload
+        }
+        fetchInitialPlaylist(); // Refresh playlist based on new auth state
+    }
+
+    async function checkAuthState() {
+        try {
+            const userData = await fetchAPI('/auth/me');
+            currentUser = userData; // userData will be null if request fails (handled by fetchAPI)
+            console.log("AUTH: User state checked:", currentUser);
+        } catch (error) {
+            // This means /auth/me returned an error (e.g., 401 Unauthorized)
+            currentUser = null;
+            console.log("AUTH: User not authenticated or session expired.");
+        }
+        updateAuthUI();
+    }
+
+    async function handleLogin(e) {
+        e.preventDefault();
+        clearApiError(loginErrorMessage);
+        const formData = new FormData(loginForm);
+        const data = Object.fromEntries(formData.entries());
+        try {
+            const result = await fetchAPI('/auth/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            console.log("Login success:", result);
+            closeLoginModal();
+            await checkAuthState(); // Update currentUser and UI
+        } catch (error) {
+            displayApiError(loginErrorMessage, error);
+        }
+    }
+
+    async function handleRegister(e) {
+        e.preventDefault();
+        clearApiError(registerErrorMessage);
+        const password = registerForm.querySelector('#registerPassword').value;
+        const confirmPassword = registerForm.querySelector('#registerConfirmPassword').value;
+        if (password !== confirmPassword) {
+            displayApiError(registerErrorMessage, "Passwords do not match.");
+            return;
+        }
+        const formData = new FormData(registerForm);
+        const data = Object.fromEntries(formData.entries());
+        delete data.confirmPassword;
+
+        try {
+            await fetchAPI('/auth/register', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            closeRegisterModal();
+            alert('Registration successful! Please login.');
+            openLoginModal();
+        } catch (error) {
+            displayApiError(registerErrorMessage, error);
+        }
+    }
+
+    async function handleLogout() {
+        try {
+            await fetchAPI('/auth/logout', { method: 'POST' });
+            currentUser = null;
+            updateAuthUI(); // This also calls fetchInitialPlaylist for guest
+        } catch (error) {
+            alert("Logout failed. Please try again. Error: " + error.message);
+        }
+    }
+
+
+    // --- Core Player & Playlist Logic (Adapted for Auth) ---
+    async function fetchInitialPlaylist() {
+        console.log("PLAYER: Fetching playlist (auth aware)...");
+        try {
+            const serverPlaylist = await fetchAPI('/api/songs'); // Backend handles auth state
+            console.log("PLAYER: Received playlist from server:", serverPlaylist);
+
+            currentInternalPlaylist = (serverPlaylist || []).map(song => ({
+                ...song,
+                id: String(song.id), // Ensure ID is string
+            }));
+
+            likedSongIds.clear();
+            currentInternalPlaylist.forEach(song => {
+                if (song.isLiked) likedSongIds.add(String(song.id));
+            });
+
+            // Determine what to display (preserve view or default)
+            const viewToRefresh = currentView || 'internal';
+            switchToView(viewToRefresh, -1, true); // -1 to not auto-select, true to force playlist update
+
+            // Auto-load first track if list is not empty and nothing is playing, or if current track is gone
+            const currentAudioSrc = audioPlayer.currentSrc || audioPlayer.src;
+            let shouldLoadNewTrack = true;
+            if(displayedPlaylist && displayedPlaylist.length > 0) {
+                if (currentAudioSrc && currentTrackIndex !== -1 && currentTrackIndex < displayedPlaylist.length) {
+                    const currentPlayingInfo = displayedPlaylist[currentTrackIndex];
+                     if (currentPlayingInfo && (currentPlayingInfo.filePath === currentAudioSrc || currentPlayingInfo.objectURL === currentAudioSrc) ) {
+                        shouldLoadNewTrack = false; // Current track is still valid and playing/paused
+                    }
+                }
+                if (shouldLoadNewTrack) {
+                    loadTrack(displayedPlaylist, 0, false); // Load first, don't auto-play
+                } else {
+                    // Ensure UI (like active class) is correct for the currently loaded track
+                    renderMainContentPlaylistTracks(displayedPlaylist, currentTrackIndex);
+                }
+            } else {
+                updateNowPlayingBarUI(null); // Clear player bar if playlist is empty
+                 renderMainContentPlaylistTracks([], -1); // Show empty message for current view
+            }
+            renderSidebarPlaylist(); // Always update sidebar
+        } catch (error) {
+            console.error("PLAYER: Could not fetch playlist:", error);
+            alert("Error fetching your playlist: " + error.message);
+            currentInternalPlaylist = []; displayedPlaylist = [];
+            updateNowPlayingBarUI(null); renderAllPlaylistsUI();
+        }
+    }
+
+
     function updateNowPlayingBarUI(song) {
-        // ... (same basic logic) ...
-        const title = song ? (song.title || "Unknown") : "No Song Loaded";
+        // ... (same as your original - updates title, artist, cover) ...
+        const title = song ? (song.title || "Unknown Track") : "No Song Loaded";
         const artist = song ? (song.artist || "---") : "---";
         const cover = song ? (song.coverPath || DEFAULT_COVER) : DEFAULT_COVER;
         if (nowPlayingTitleDisplay) nowPlayingTitleDisplay.textContent = title;
         if (nowPlayingArtistDisplay) nowPlayingArtistDisplay.textContent = artist;
-        if (nowPlayingAlbumArt) { nowPlayingAlbumArt.src = cover; nowPlayingAlbumArt.onerror = ()=>{if(nowPlayingAlbumArt)nowPlayingAlbumArt.src=DEFAULT_COVER;}; }
+        if (nowPlayingAlbumArt) { nowPlayingAlbumArt.src = cover; nowPlayingAlbumArt.onerror = () => { if (nowPlayingAlbumArt) nowPlayingAlbumArt.src = DEFAULT_COVER; }; }
 
-        // Update footer like button state
         if (likeBtn) {
-            const isLiked = song ? likedSongIds.has(song.id) : false;
-            likeBtn.classList.toggle('active', isLiked);
+            const isLikedCurrent = song ? likedSongIds.has(String(song.id)) : false;
+            likeBtn.classList.toggle('active', isLikedCurrent);
             const icon = likeBtn.querySelector('i');
-            if (icon) icon.className = `fa-${isLiked ? 'solid' : 'regular'} fa-heart`;
+            if (icon) icon.className = `fa-${isLikedCurrent ? 'solid' : 'regular'} fa-heart`;
         }
     }
 
     function loadTrack(playlistSource, index, playWhenLoaded = true) {
-        // ... (mostly same logic as last working version) ...
-        console.log(`PLAYER: loadTrack. Source type: ${playlistSource === currentInternalPlaylist ? 'internal' : (playlistSource === displayedPlaylist ? 'displayed' : 'unknown')}. Index: ${index}. Play: ${playWhenLoaded}`);
+        // ... (mostly same logic as your original) ...
+        // Ensure playlistSource is valid and index is in bounds
+        if (!playlistSource || index < 0 || index >= playlistSource.length) {
+            console.error("PLAYER: Invalid playlist source or index for loadTrack.", playlistSource, index);
+            if (playlistSource && playlistSource.length > 0 && index >= playlistSource.length) { // Try to load first if index out of bounds
+                index = 0;
+            } else {
+                updateNowPlayingBarUI(null); // Clear bar if cannot load
+                if(audioPlayer && !audioPlayer.paused) audioPlayer.pause();
+                isPlaying = false; updatePlayPauseButtonVisualState();
+                return;
+            }
+        }
         if (!audioPlayer) return;
         if (!audioPlayer.paused) audioPlayer.pause();
 
-        const sourceArray = playlistSource;
-        if (!sourceArray || index < 0 || index >= sourceArray.length) { console.error("PLAYER: Invalid source or index"); return; }
+        currentTrackIndex = index; // Relative to playlistSource (which should be displayedPlaylist)
+        const trackToLoad = playlistSource[currentTrackIndex];
+        if (!trackToLoad) { console.error("Track not found at index", currentTrackIndex); return; }
 
-        currentTrackIndex = index;
-        const trackToLoad = sourceArray[currentTrackIndex];
-        if (!trackToLoad) return;
+        updateNowPlayingBarUI(trackToLoad);
 
-        console.log("PLAYER: Loading details:", trackToLoad);
-        updateNowPlayingBarUI(trackToLoad); // Update bar based on selected track
-
-        let newSrc = ""; let isPlayable = false;
-        if (trackToLoad.isLocal) { newSrc = trackToLoad.objectURL || trackToLoad.filePath; isPlayable = !!newSrc; }
-        else if (trackToLoad.filePath?.startsWith("http")) { newSrc = trackToLoad.filePath; isPlayable = true; } // Jamendo
-        else { console.warn("PLAYER: Track not playable", trackToLoad); isPlayable = false; }
+        let newSrc = trackToLoad.filePath || trackToLoad.objectURL; // objectURL for fresh uploads
+        let isPlayable = !!newSrc;
 
         console.log(`PLAYER: Determined newSrc:"${newSrc}", isPlayable:${isPlayable}`);
 
         if (isPlayable && newSrc) {
-            let currentEffectiveSrc = audioPlayer.currentSrc || audioPlayer.src;
-            if (!currentEffectiveSrc || currentEffectiveSrc !== newSrc || audioPlayer.readyState === 0) {
-                console.log("PLAYER: Setting src and loading:", newSrc); audioPlayer.src = newSrc; audioPlayer.load();
-            } else { console.log("PLAYER: Src already set."); }
-
+            if (!audioPlayer.src || audioPlayer.src !== newSrc || audioPlayer.readyState === 0) {
+                audioPlayer.src = newSrc; audioPlayer.load();
+            }
             if (playWhenLoaded) {
-                console.log("PLAYER: Attempting play:", audioPlayer.src);
-                const p = audioPlayer.play(); if(p)p.then(()=>{isPlaying=true;}).catch(e=>{console.error("Play() error:",e);isPlaying=false;}).finally(updatePlayPauseButtonVisualState);
-                else { isPlaying=false; updatePlayPauseButtonVisualState(); }
-            } else { isPlaying=false; updatePlayPauseButtonVisualState(); }
-        } else { // Not playable
-            console.log("PLAYER: Track not playable. Detaching source."); isPlaying=false;
+                const playPromise = audioPlayer.play();
+                if (playPromise !== undefined) {
+                    playPromise.then(() => { isPlaying = true; }).catch(e => { console.error("Play() error:", e); isPlaying = false; alert(`Could not play ${trackToLoad.title}: ${e.message}`); }).finally(updatePlayPauseButtonVisualState);
+                } else { isPlaying = true; /* For older browsers or if promise not returned */ }
+            } else { isPlaying = false; }
+        } else {
+            console.warn("PLAYER: Track not playable or no source. Detaching.", trackToLoad);
+            isPlaying = false;
             if (audioPlayer.src !== "") { audioPlayer.removeAttribute('src'); audioPlayer.load(); }
-            updatePlayPauseButtonVisualState();
         }
-        // Ensure displayed playlist is rendered correctly highlighting the active track
-        renderMainContentPlaylistTracks(displayedPlaylist, currentTrackIndex);
-        renderSidebarPlaylist(); // Update sidebar (active state might change)
+        updatePlayPauseButtonVisualState();
+        renderMainContentPlaylistTracks(displayedPlaylist, currentTrackIndex); // Highlight active
+        renderSidebarPlaylist();
     }
 
-    function togglePlayPause() { /* ... (same logic as last working version) ... */
+    // --- togglePlayPause, updatePlayPauseButtonVisualState, playNext, playPrev, progress updates, metadata loaded ---
+    // (These functions from your original JS can largely remain the same, ensure they use `displayedPlaylist`)
+    function togglePlayPause() { /* ... (Your existing logic, ensure it uses displayedPlaylist and handles loadTrack if needed) ... */
         if (!audioPlayer) return;
         const track = displayedPlaylist[currentTrackIndex];
-        if(!track && currentInternalPlaylist.length > 0){ loadTrack(currentInternalPlaylist, 0, true); return; }
-        if(!track) { if(uploadTrigger) openUploadModal(); return; }
-        const isSelPlayable = track.isLocal || track.filePath?.startsWith('http') || track.filePath?.startsWith('/assets/');
-        const isSrcPlayable = audioPlayer.src && !audioPlayer.src.endsWith(window.location.host+"/");
-        if(audioPlayer.paused || audioPlayer.ended){ // Try Play
-            if(isSelPlayable){
-                let expectedSrc = track.isLocal ? (track.objectURL || track.filePath) : track.filePath;
-                if(isSrcPlayable && (audioPlayer.currentSrc || audioPlayer.src) === expectedSrc) {
-                    const p=audioPlayer.play(); if(p)p.then(()=>isPlaying=true).catch(e=>{console.error("Play err:",e);isPlaying=false;}).finally(updatePlayPauseButtonVisualState);
-                } else { loadTrack(displayedPlaylist, currentTrackIndex, true); }
-            } else { console.warn("Cannot play non-playable track."); alert(`Info: ${track.title} cannot be played directly.`); isPlaying=false; updatePlayPauseButtonVisualState(); }
-        } else { // Try Pause
-             if (isSrcPlayable) audioPlayer.pause(); isPlaying = false; updatePlayPauseButtonVisualState();
+        if(!track && currentInternalPlaylist.length > 0){ loadTrack(currentInternalPlaylist, 0, true); return; } // Fallback to internal if displayed is somehow empty
+        if(!track) { if(uploadTrigger && currentUser) openUploadModal(); else if (!currentUser) openLoginModal(); return; }
+
+        if(audioPlayer.paused || audioPlayer.ended){
+            let expectedSrc = track.filePath || track.objectURL;
+            if(audioPlayer.src && (audioPlayer.currentSrc || audioPlayer.src) === expectedSrc) {
+                const p=audioPlayer.play(); if(p)p.then(()=>isPlaying=true).catch(e=>{console.error("Play err:",e);isPlaying=false; alert("Error playing: " + e.message);}).finally(updatePlayPauseButtonVisualState);
+            } else { loadTrack(displayedPlaylist, currentTrackIndex, true); }
+        } else {
+            audioPlayer.pause(); isPlaying = false; updatePlayPauseButtonVisualState();
         }
     }
+    function updatePlayPauseButtonVisualState() { if(!playPauseBtn||!audioPlayer)return; const i=playPauseBtn.querySelector('i');if(!i)return; if(!audioPlayer.paused&&isPlaying){i.className='fa-solid fa-pause';playPauseBtn.ariaLabel='Pause';}else{i.className='fa-solid fa-play';playPauseBtn.ariaLabel='Play';}}
+    function playNextTrackLogic() { if(displayedPlaylist.length===0)return; let nextIdx; if(isShuffleActive){/* Implement shuffle logic */}else{nextIdx=(currentTrackIndex+1); if(nextIdx>=displayedPlaylist.length){if(repeatMode===2){nextIdx=0;}else{console.log("End of playlist.");isPlaying=false;updatePlayPauseButtonVisualState();return;}}} loadTrack(displayedPlaylist,nextIdx,true); }
+    function playPrevTrackLogic() { if(displayedPlaylist.length===0)return; let prevIdx=(currentTrackIndex-1+displayedPlaylist.length)%displayedPlaylist.length; loadTrack(displayedPlaylist,prevIdx,true); }
+    function updateProgressBarOnTimeUpdate() { if(!audioPlayer||!progressBar||!currentTimeDisplay)return;if(isFinite(audioPlayer.duration)){progressBar.value=audioPlayer.currentTime;currentTimeDisplay.textContent=formatTime(audioPlayer.currentTime);}else{progressBar.value=0;currentTimeDisplay.textContent=formatTime(0);} }
+    function handleAudioMetadataLoaded() { if(!audioPlayer||!progressBar||!totalDurationDisplay)return;console.log(`Metadata loaded. Duration:${audioPlayer.duration}`);if(isFinite(audioPlayer.duration)){totalDurationDisplay.textContent=formatTime(audioPlayer.duration);progressBar.max=audioPlayer.duration;}else{totalDurationDisplay.textContent="--:--";progressBar.max=0;}updatePlayPauseButtonVisualState();}
 
-    function updatePlayPauseButtonVisualState() { /* ... (same) ... */ if(!playPauseBtn||!audioPlayer)return; const i=playPauseBtn.querySelector('i');if(!i)return; if(!audioPlayer.paused&&isPlaying){i.className='fa-solid fa-pause';playPauseBtn.ariaLabel='Pause';}else{i.className='fa-solid fa-play';playPauseBtn.ariaLabel='Play';}}
-    function playNextTrackLogic() { /* ... (same - uses displayedPlaylist) ... */ if(displayedPlaylist.length===0)return; let nextIdx; if(isShuffleActive){/*shuffle*/}else{nextIdx=currentTrackIndex+1; if(nextIdx>=displayedPlaylist.length){if(repeatMode===2)nextIdx=0;else{console.log("End.");isPlaying=false;updatePlayPauseButtonVisualState();return;}}} loadTrack(displayedPlaylist, nextIdx, true); }
-    function playPrevTrackLogic() { /* ... (same - uses displayedPlaylist) ... */ if(displayedPlaylist.length===0)return; let prevIdx = (currentTrackIndex-1+displayedPlaylist.length)%displayedPlaylist.length; loadTrack(displayedPlaylist, prevIdx, true); }
-    function updateProgressBarOnTimeUpdate() { /* ... (same) ... */ if(!audioPlayer||!progressBar||!currentTimeDisplay)return;if(isFinite(audioPlayer.duration)){progressBar.value=audioPlayer.currentTime;currentTimeDisplay.textContent=formatTime(audioPlayer.currentTime);}else{progressBar.value=0;currentTimeDisplay.textContent=formatTime(0);} }
-    function handleAudioMetadataLoaded() { /* ... (same) ... */ if(!audioPlayer||!progressBar||!totalDurationDisplay)return;console.log(`Metadata loaded. Duration:${audioPlayer.duration}`);if(isFinite(audioPlayer.duration)){totalDurationDisplay.textContent=formatTime(audioPlayer.duration);progressBar.max=audioPlayer.duration;}else{totalDurationDisplay.textContent="--:--";progressBar.max=0;}updatePlayPauseButtonVisualState();}
 
-    // --- Playlist Rendering ---
-    function renderAllPlaylistsUI() {
-        console.log("UI_UPDATE: Rendering views. Current view:", currentView);
-        renderSidebarPlaylist();
-        renderMainContentPlaylistTracks(displayedPlaylist, currentTrackIndex);
-    }
+    // --- Playlist Rendering (Adapted) ---
+    function renderAllPlaylistsUI() { renderSidebarPlaylist(); renderMainContentPlaylistTracks(displayedPlaylist, currentTrackIndex); }
 
-    function renderSidebarPlaylist() { /* ... (same - renders currentInternalPlaylist) ... */
-         if (!sidebarPlaylistElement) return; sidebarPlaylistElement.innerHTML = '';
-         currentInternalPlaylist.forEach((song, internalIdx) => {
-            const li = document.createElement('li'); li.dataset.internalIndex = internalIdx; li.dataset.id = song.id;
-            const currentlySelectedTrack = displayedPlaylist[currentTrackIndex];
-            // Highlight if internal song is selected *and* we are viewing the internal playlist
-            if (currentView === 'internal' && currentlySelectedTrack && currentlySelectedTrack.id === song.id) {
+    function renderSidebarPlaylist() { // Renders from currentInternalPlaylist
+        if (!sidebarPlaylistElement) return;
+        sidebarPlaylistElement.innerHTML = '';
+        // Filter for display: only show user's uploads and non-Jamendo liked songs in sidebar "queue"
+        const sidebarDisplayable = currentInternalPlaylist.filter(s => s.isLocal || (s.isUploaded && s.userId === currentUser?.userId) || (likedSongIds.has(s.id) && !s.id.startsWith("jamendo-")));
+
+        sidebarDisplayable.forEach((song, indexInSidebarList) => {
+            const li = document.createElement('li');
+            // Find original index in currentInternalPlaylist for consistent playing
+            const originalInternalIndex = currentInternalPlaylist.findIndex(s_orig => s_orig.id === song.id);
+            li.dataset.internalIndex = originalInternalIndex; // Use original index from full internal list
+            li.dataset.id = song.id;
+
+            const currentlySelectedTrackInMain = displayedPlaylist[currentTrackIndex];
+            if (currentView === 'internal' && currentlySelectedTrackInMain && currentlySelectedTrackInMain.id === song.id) {
                 li.classList.add('active');
             }
             li.innerHTML = `<span class="title">${song.title}</span><span class="artist">${song.artist}</span>`;
-            li.addEventListener('click', () => { switchToView('internal', internalIdx); }); // Switch to internal view and play this song
+            li.addEventListener('click', () => { switchToView('internal', originalInternalIndex); });
             sidebarPlaylistElement.appendChild(li);
         });
-     }
+    }
 
     function renderMainContentPlaylistTracks(sourcePlaylistToRender, activeIndexInSource) {
+        // ... (Your existing complex rendering logic) ...
+        // Key changes:
+        // 1. Check `song.isLiked` (already set by fetchInitialPlaylist) or `likedSongIds.has(song.id)` for like icon.
+        // 2. Action buttons:
+        //    - "Add to Queue": Only for search results if not in `currentInternalPlaylist`. (Adding from search means liking it, which adds it to server's song list if Jamendo and then appears in fetched internal list). Simpler: just make "like" add it.
+        //    - "Remove from Queue":
+        //        - If `song.isUploaded && song.userId === currentUser.userId`: Show a "Delete Upload" icon/text.
+        //        - If `likedSongIds.has(song.id)` and not an owned upload: Show "Unlike" icon/text (or let the like button itself handle unliking).
+        //        - Otherwise (e.g. a sample song or a Jamendo song not liked, just in queue from previous session): Show "Remove from client queue".
+        //    - "Like/Unlike": Always present.
         if (!mainContentPlaylistTracksElement) return;
         mainContentPlaylistTracksElement.innerHTML = '';
-        if (!sourcePlaylistToRender || sourcePlaylistToRender.length === 0) {
-            mainContentPlaylistTracksElement.innerHTML = `<p class="empty-playlist-message">${currentView === 'search' ? 'No search results.' : (currentView === 'liked' ? 'No liked songs yet.' : 'Playlist empty. Upload songs!')}</p>`; return;
+        const listToRender = sourcePlaylistToRender || [];
+        if (listToRender.length === 0) {
+            mainContentPlaylistTracksElement.innerHTML = `<p class="empty-playlist-message">${currentView === 'search' ? 'No search results.' : (currentView === 'liked' ? 'No liked songs yet.' : (currentUser ? 'Playlist empty. Upload or like songs!' : 'Playlist empty. Login to manage songs.'))}</p>`; return;
         }
-        sourcePlaylistToRender.forEach((song, index) => {
+        listToRender.forEach((song, index) => {
             const trackItem = document.createElement('div');
             trackItem.className = 'track-item';
-            trackItem.dataset.index = index; trackItem.dataset.id = song.id;
+            trackItem.dataset.index = index; trackItem.dataset.id = String(song.id);
             if (index === activeIndexInSource) trackItem.classList.add('active');
 
-            const isPlayableEntry = song.isLocal || song.filePath?.startsWith('http');
-            let dynamicDuration = song.duration ? formatTime(song.duration) : (isPlayableEntry ? "--:--" : "N/A");
-             if(isPlayableEntry && !song.duration && song.filePath){ /* ... async duration fetch ... */
-                 const tempAudio = new Audio(song.filePath); tempAudio.onloadedmetadata = () => { if (isFinite(tempAudio.duration)) { const d=trackItem.querySelector('.track-duration'); if(d)d.textContent=formatTime(tempAudio.duration); }};
-             }
-
-            const isLiked = likedSongIds.has(song.id);
+            const isLiked = likedSongIds.has(String(song.id));
             const likeIconClass = isLiked ? 'fa-solid fa-heart' : 'fa-regular fa-heart';
-            const likeBtnTitle = isLiked ? 'Unlike' : 'Like';
+            const likeBtnTitle = isLiked ? 'Unlike' : 'Like Song';
+            const isOwner = currentUser && song.isUploaded && song.userId === currentUser.userId;
 
-            // Only show Add/Remove buttons when viewing the internal or liked playlist
             let actionButtonsHTML = '';
-            const isInInternalPlaylist = currentInternalPlaylist.some(s => s.id === song.id);
-
-            if (currentView === 'search' && !isInInternalPlaylist) {
-                // Show Add button only in search results if not already in internal list
-                 actionButtonsHTML += `<button class="action-btn add-to-queue-btn" data-id="${song.id}" title="Add to Queue"><i class="fa-solid fa-plus"></i></button>`;
-            } else if (currentView === 'internal' || currentView === 'liked') {
-                 // Show Remove button when viewing internal or liked playlists
-                 actionButtonsHTML += `<button class="action-btn remove-track-btn" data-id="${song.id}" data-index="${index}" title="Remove from Queue"><i class="fa-solid fa-trash-can"></i></button>`;
+            if (currentView === 'search' && !currentInternalPlaylist.some(s => s.id === song.id)) {
+                // In search, "Add" is effectively "Like" which backend handles by adding to songs table if new
+                // The main "like" button will handle this.
+            } else if (isOwner) {
+                 actionButtonsHTML += `<button class="action-btn delete-uploaded-track-btn" data-id="${song.id}" title="Delete Upload"><i class="fa-solid fa-trash-can"></i></button>`;
+            } else if ( (currentView === 'internal' || currentView === 'liked') && !song.isLocal && !song.isUploaded) { // e.g. a Jamendo song in queue
+                // If it's not liked, "remove" just removes from client queue (if we implement client-only queue)
+                // For simplicity now, "remove" on non-owned, non-sample songs means "unlike" if liked.
+                // If not liked, it shouldn't be in 'liked' view. If in 'internal' and not liked (e.g. from search, then view switch),
+                // a generic remove from current view might be an option, but complicates state.
+                // Let's assume liked songs are the main way non-local/non-uploaded songs persist in user's "internal" view from server.
             }
 
-            // Always show Like button
+
             actionButtonsHTML += `<button class="action-btn like-track-btn" data-id="${song.id}" title="${likeBtnTitle}"><i class="${likeIconClass}"></i></button>`;
 
-
-            trackItem.innerHTML = `
-                <div class="track-number"><span>${index + 1}</span><i class="fa-solid ${isPlayableEntry ? 'fa-play' : 'fa-info-circle'}"></i></div>
+            // ... (rest of your trackItem.innerHTML structure from original, using actionButtonsHTML)
+             trackItem.innerHTML = `
+                <div class="track-number"><span>${index + 1}</span><i class="fa-solid fa-play"></i></div>
                 <div class="track-info">
                     <img src="${song.coverPath || DEFAULT_COVER}" alt="${song.title}" class="track-item-cover" onerror="this.src='${DEFAULT_COVER}';">
                     <div class="track-details"><div class="track-title">${song.title}</div><div class="track-artist">${song.artist}</div></div>
                 </div>
                 <div class="track-artist-main">${song.artist || '---'}</div>
-                <div class="track-album">${song.album || (song.isLocal ? 'Uploaded' : 'Jamendo')}</div>
-                <div class="track-duration">${dynamicDuration}</div>
-                <div class="track-actions">${actionButtonsHTML}</div>`; // Insert action buttons
+                <div class="track-album">${song.album || (song.isUploaded ? 'My Uploads' : (song.isLocal ? 'Samples' : 'Jamendo'))}</div>
+                <div class="track-duration">${song.duration ? formatTime(song.duration) : "--:--"}</div>
+                <div class="track-actions">${actionButtonsHTML}</div>`;
 
-            // Use event delegation on the parent for actions, or attach here
+
             trackItem.addEventListener('click', (e) => {
-                 if (e.target.closest('.add-to-queue-btn')) {
-                     addSongToInternalPlaylist(song); // song is from sourcePlaylistToRender
-                     renderMainContentPlaylistTracks(sourcePlaylistToRender, activeIndexInSource); // Re-render to update btn state
-                     renderSidebarPlaylist();
-                 } else if (e.target.closest('.like-track-btn')) {
-                     toggleLikeSong(song.id);
-                     // Re-render this item or just update button state
-                     const likeIcon = e.target.closest('.like-track-btn').querySelector('i');
-                     const isNowLiked = likedSongIds.has(song.id);
-                     if(likeIcon) likeIcon.className = `fa-${isNowLiked ? 'solid' : 'regular'} fa-heart`;
-                     e.target.closest('.like-track-btn').title = isNowLiked ? 'Unlike' : 'Like';
-                     // Update footer like button if this is the currently playing song
-                     if (displayedPlaylist[currentTrackIndex]?.id === song.id) updateNowPlayingBarUI(song);
-                     // If viewing liked songs, removing the like should remove it from view
-                     if (currentView === 'liked' && !isNowLiked) {
-                         switchToView('liked'); // Re-filter and render liked songs view
-                     }
-
-                 } else if (e.target.closest('.remove-track-btn')) {
-                     removeSongFromInternalPlaylist(song.id, index); // Pass index from *this rendering*
-                 } else {
-                     // Click on the row itself (not an action button) -> play
-                    loadTrack(sourcePlaylistToRender, index, true);
-                 }
+                const targetButton = e.target.closest('.action-btn');
+                if (targetButton) {
+                    if (targetButton.classList.contains('like-track-btn')) {
+                        toggleLikeSong(song.id);
+                    } else if (targetButton.classList.contains('delete-uploaded-track-btn')) {
+                        handleDeleteUploadedSong(song.id, song.title);
+                    }
+                    // Add other action button handlers if any
+                } else {
+                    // Click on the row itself -> play
+                    loadTrack(listToRender, index, true);
+                }
             });
             mainContentPlaylistTracksElement.appendChild(trackItem);
         });
-     }
+    }
 
-    // --- Playlist Management ---
-    function addSongToInternalPlaylist(songToAdd) {
-        if (!currentInternalPlaylist.some(s => s.id === songToAdd.id)) {
-            currentInternalPlaylist.push({ ...songToAdd });
-            console.log("PLAYLIST_MGMT: Added:", songToAdd.title);
-            // Don't re-render sidebar here, let the calling context handle it if needed
-        } else {
-            console.log("PLAYLIST_MGMT: Already exists:", songToAdd.title);
+    // --- Playlist Management (Interacting with Backend) ---
+    async function toggleLikeSong(songIdToToggle) {
+        // ... (Your existing toggleLikeSong from JS, but ensure it uses fetchAPI and handles errors) ...
+        // Example snippet:
+        if (!currentUser) { alert("Please login to like songs."); openLoginModal(); return; }
+        const songData = displayedPlaylist.find(s => String(s.id) === String(songIdToToggle)) || currentInternalPlaylist.find(s => String(s.id) === String(songIdToToggle));
+        if (!songData) { console.error("Like Error: Song data not found for ID:", songIdToToggle); return; }
+
+        const wasLiked = likedSongIds.has(String(songIdToToggle));
+        const endpoint = wasLiked ? '/api/songs/unlike' : '/api/songs/like';
+        const body = {
+            songId: songData.id, // Backend uses this to find/update DB record
+            // For 'like', backend needs full song info if it's a new Jamendo song
+            title: songData.title, artist: songData.artist, album: songData.album,
+            filePath: songData.filePath, coverPath: songData.coverPath, duration: songData.duration,
+            isLocal: songData.isLocal, jamendoId: songData.jamendoId || (songData.id.startsWith('jamendo-') ? songData.id.substring(8) : null)
+        };
+
+        try {
+            const result = await fetchAPI(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+            console.log(`API: ${wasLiked ? 'Unliked' : 'Liked'} song ID: ${result.songId}`);
+            // Optimistically update client-side state, or call fetchInitialPlaylist
+            if (wasLiked) { likedSongIds.delete(String(result.songId)); } else { likedSongIds.add(String(result.songId)); }
+            // Update the isLiked status in currentInternalPlaylist directly for immediate UI feedback if needed,
+            // before full fetchInitialPlaylist completes (which is more robust).
+            const internalSong = currentInternalPlaylist.find(s => s.id === result.songId);
+            if(internalSong) internalSong.isLiked = !wasLiked;
+
+
+            // Re-render relevant parts or the whole view
+            const trackItemIcon = mainContentPlaylistTracksElement.querySelector(`.track-item[data-id="${result.songId}"] .like-track-btn i`);
+            if(trackItemIcon) trackItemIcon.className = likedSongIds.has(String(result.songId)) ? 'fa-solid fa-heart' : 'fa-regular fa-heart';
+            if (displayedPlaylist[currentTrackIndex]?.id === result.songId) updateNowPlayingBarUI(songData); // songData here will have old isLiked
+            if (currentView === 'liked') switchToView('liked', -1, true); // Force refresh of liked view
+
+        } catch (error) {
+            alert(`Failed to ${wasLiked ? 'unlike' : 'like'} song: ${error.message}`);
         }
     }
 
-    function removeSongFromInternalPlaylist(songIdToRemove, indexInDisplayedList) {
-         console.log(`PLAYLIST_MGMT: Attempting to remove song ID ${songIdToRemove} which was at displayed index ${indexInDisplayedList}`);
-         const initialInternalLength = currentInternalPlaylist.length;
-         currentInternalPlaylist = currentInternalPlaylist.filter(song => song.id !== songIdToRemove);
+    function getLikedSongsPlaylist() { return currentInternalPlaylist.filter(song => likedSongIds.has(String(song.id))); }
 
-         if (currentInternalPlaylist.length < initialInternalLength) {
-             console.log("PLAYLIST_MGMT: Song removed successfully.");
-             // Also remove from liked songs if it was liked
-             if (likedSongIds.has(songIdToRemove)) {
-                 likedSongIds.delete(songIdToRemove);
-                 console.log("PLAYLIST_MGMT: Also removed from liked songs.");
-             }
-
-             // --- Handle playback state ---
-             const currentlyPlayingTrack = displayedPlaylist[currentTrackIndex];
-             let nextTrackIndex = currentTrackIndex; // Default to current index
-
-             if (currentlyPlayingTrack && currentlyPlayingTrack.id === songIdToRemove) {
-                 // We removed the currently playing song
-                 console.log("PLAYLIST_MGMT: Removed currently playing song.");
-                 audioPlayer.pause();
-                 audioPlayer.removeAttribute("src");
-                 audioPlayer.load();
-                 isPlaying = false;
-                 updateNowPlayingBarUI(null); // Clear player bar
-
-                 // Decide what to play next (or if list is now empty)
-                 if (currentInternalPlaylist.length === 0) {
-                      console.log("PLAYLIST_MGMT: Internal playlist is now empty.");
-                      displayedPlaylist = [];
-                      currentTrackIndex = -1;
-                 } else {
-                      // Try to select the track that *was* at the same index, or the previous one if it was last
-                      nextTrackIndex = Math.min(indexInDisplayedList, currentInternalPlaylist.length - 1);
-                 }
-             } else if (indexInDisplayedList < currentTrackIndex) {
-                  // If we removed a song *before* the currently playing one, adjust the index
-                  nextTrackIndex = currentTrackIndex - 1;
-             } else {
-                 // Removing a song after the current one doesn't change the current index
-                 nextTrackIndex = currentTrackIndex;
-             }
-
-
-             // Update the displayed playlist based on the current view
-             if (currentView === 'internal') {
-                 displayedPlaylist = [...currentInternalPlaylist];
-                 currentTrackIndex = nextTrackIndex; // Use the adjusted index
-                 renderAllPlaylistsUI(); // Re-render everything
-                 // Optionally auto-load the new current track if something was playing
-                 // if(currentTrackIndex !== -1) loadTrack(displayedPlaylist, currentTrackIndex, false); // Load but don't auto-play
-             } else if (currentView === 'liked') {
-                 // Re-filter and display liked songs
-                 switchToView('liked'); // This will re-render with the updated liked list
-             }
-              // If search view was active, removing from internal only affects sidebar
-
-             renderSidebarPlaylist(); // Always update sidebar
-
-         } else {
-             console.warn("PLAYLIST_MGMT: Song ID not found in internal playlist for removal:", songIdToRemove);
-         }
-    }
-
-    // --- Liked Songs Logic ---
-    function toggleLikeSong(songId) {
-        if (!songId) return;
-        let wasLiked = likedSongIds.has(songId);
-        if (wasLiked) {
-            likedSongIds.delete(songId);
-            console.log(`LIKED: Unliked song ID: ${songId}`);
-        } else {
-            likedSongIds.add(songId);
-            console.log(`LIKED: Liked song ID: ${songId}`);
-            // Ensure the song data exists in internal playlist if liking from search results
-            const songData = displayedPlaylist.find(s => s.id === songId);
-            if(songData && !currentInternalPlaylist.some(s => s.id === songId)) {
-                addSongToInternalPlaylist(songData);
-                renderSidebarPlaylist(); // Update sidebar if added
+    async function handleFileUpload(files) {
+        // ... (Your existing handleFileUpload, but use fetchAPI for the upload call) ...
+        // Example snippet:
+        if (!currentUser) { alert("Please login to upload songs."); openLoginModal(); return; }
+        if (!files || files.length === 0) return;
+        // ... (FormData setup as before) ...
+        for (const file of Array.from(files)) {
+            // ... (create progress LI) ...
+            const formData = new FormData();
+            formData.append('audioFile', file); /* ... other form data ... */
+            try {
+                const newSong = await fetchAPI('/api/songs/upload', { method: 'POST', body: formData }); // No Content-Type for FormData
+                // ... (update progress LI, then call fetchInitialPlaylist) ...
+                li.textContent = `Uploaded: ${newSong.title}`;
+                fetchInitialPlaylist(); // Refresh to get the new server state
+            } catch (error) {
+                // ... (update progress LI with error) ...
+                li.textContent = `Failed: ${file.name} - ${error.message}`; li.style.color = 'red';
             }
         }
-        // Update UI (buttons will be updated by render function or specific calls)
     }
 
-    function getLikedSongsPlaylist() {
-        // Filter the internal playlist to get full song objects for liked IDs
-        return currentInternalPlaylist.filter(song => likedSongIds.has(song.id));
+    async function handleDeleteUploadedSong(songId, songTitle) {
+        if (!currentUser) { alert("Login required."); return; }
+        if (!confirm(`Are you sure you want to permanently delete your uploaded song "${songTitle}"?`)) return;
+
+        try {
+            // Backend requires songId in query or body. Let's use query for DELETE.
+            // Or if your handler expects POST for delete: method: 'POST', body: JSON.stringify({songId})
+            await fetchAPI(`/api/songs/delete?id=${encodeURIComponent(songId)}`, { method: 'DELETE' });
+            console.log("Song deleted:", songId);
+            // Refresh playlist from server
+            fetchInitialPlaylist();
+            // If the deleted song was playing, stop playback
+            if (audioPlayer.src && displayedPlaylist[currentTrackIndex]?.id === songId) {
+                audioPlayer.pause(); audioPlayer.removeAttribute("src"); audioPlayer.load();
+                updateNowPlayingBarUI(null); currentTrackIndex = -1;
+            }
+        } catch (error) {
+            alert(`Failed to delete song: ${error.message}`);
+        }
     }
 
 
-    // --- View Switching ---
-    function switchToView(viewType, targetIndex = 0) {
-        console.log(`VIEW_SWITCH: Switching to '${viewType}' view.`);
+    // --- View Switching (Adapted) ---
+    function switchToView(viewType, targetIndex = 0, forcePlaylistUpdate = false) {
+        console.log(`VIEW_SWITCH: To '${viewType}', targetIdx: ${targetIndex}, forceUpdate: ${forcePlaylistUpdate}`);
         currentView = viewType;
-        let activeIndex = -1; // Index relative to the *new* displayedPlaylist
+        let newDisplayedPlaylist = [];
+        let newActiveIndex = -1;
 
-        // Remove 'active-view' class from all sidebar items first
-        document.querySelectorAll('.library-item.active-view, .main-nav li.active-view').forEach(el => el.classList.remove('active-view'));
+        // Highlight active nav item
+        document.querySelectorAll('.main-nav li.active, .library-item.active-view').forEach(el => el.classList.remove('active', 'active-view'));
+        if (viewType === 'internal' && homeNavItem) homeNavItem.closest('li').classList.add('active'); // Assuming homeNavItem is inside an <li>
+        else if (viewType === 'liked' && likedSongsNavItem) likedSongsNavItem.closest('li').classList.add('active');
 
 
         if (viewType === 'internal') {
-            displayedPlaylist = [...currentInternalPlaylist];
-            if(mainPlaylistTitleElement) mainPlaylistTitleElement.textContent = "Your Playlist Queue";
-            // Try to find the currently playing song or use targetIndex
-            const currentTrack = audioPlayer.src ? currentInternalPlaylist.find(s => (s.isLocal?(s.objectURL||s.filePath):s.filePath) === audioPlayer.src) : null;
-            activeIndex = currentTrack ? currentInternalPlaylist.indexOf(currentTrack) : (targetIndex < displayedPlaylist.length ? targetIndex : (displayedPlaylist.length > 0 ? 0 : -1));
-            if(homeNavItem) homeNavItem.classList.add('active-view'); // Highlight Home
+            newDisplayedPlaylist = [...currentInternalPlaylist];
+            if(mainPlaylistTitleElement) mainPlaylistTitleElement.textContent = currentUser ? `${currentUser.username}'s Queue` : "Harmony Queue";
         } else if (viewType === 'liked') {
-            displayedPlaylist = getLikedSongsPlaylist();
+            newDisplayedPlaylist = getLikedSongsPlaylist();
             if(mainPlaylistTitleElement) mainPlaylistTitleElement.textContent = "Liked Songs";
-            // Find if currently playing song is in the liked list
-             const currentTrack = audioPlayer.src ? displayedPlaylist.find(s => (s.isLocal?(s.objectURL||s.filePath):s.filePath) === audioPlayer.src) : null;
-             activeIndex = currentTrack ? displayedPlaylist.indexOf(currentTrack) : (targetIndex < displayedPlaylist.length ? targetIndex : (displayedPlaylist.length > 0 ? 0 : -1));
-            if(likedSongsNavItem) likedSongsNavItem.classList.add('active-view'); // Highlight Liked Songs
         } else if (viewType === 'search') {
-            // displayedPlaylist is already set by search function
-            if(mainPlaylistTitleElement) mainPlaylistTitleElement.textContent = `Search Results`; // Title set during search
-             activeIndex = -1; // No specific track active when showing new results
+            // displayedPlaylist is set by searchJamendo, so newDisplayedPlaylist will be that
+            newDisplayedPlaylist = displayedPlaylist; // Keep existing search results if any
+            if(mainPlaylistTitleElement && jamendoSearchInput.value) mainPlaylistTitleElement.textContent = `Search: "${jamendoSearchInput.value}"`;
+            else if (mainPlaylistTitleElement) mainPlaylistTitleElement.textContent = "Search Results";
         }
 
-        currentTrackIndex = activeIndex;
+        // Determine active index in the new list
+        if (targetIndex >= 0 && targetIndex < newDisplayedPlaylist.length) {
+            newActiveIndex = targetIndex;
+        } else if (newDisplayedPlaylist.length > 0) {
+             // Try to find currently playing song in new list
+            const currentAudioFile = audioPlayer.src;
+            if (currentAudioFile) {
+                const playingIndexInNewList = newDisplayedPlaylist.findIndex(s => (s.filePath || s.objectURL) === currentAudioFile);
+                if (playingIndexInNewList !== -1) newActiveIndex = playingIndexInNewList;
+                else newActiveIndex = 0; // Default to first if not found
+            } else {
+                newActiveIndex = 0; // Default to first if nothing was playing
+            }
+        } else {
+            newActiveIndex = -1; // Empty list
+        }
+
+
+        if (forcePlaylistUpdate || displayedPlaylist !== newDisplayedPlaylist) { // Avoid re-assign if same array object
+            displayedPlaylist = newDisplayedPlaylist;
+        }
+        currentTrackIndex = newActiveIndex;
+
         renderMainContentPlaylistTracks(displayedPlaylist, currentTrackIndex);
 
-        // Update Now Playing bar to reflect the selected item in the new view, or clear it
-        if(currentTrackIndex !== -1 && currentTrackIndex < displayedPlaylist.length) {
-             // Don't reload/play, just update bar info IF the audio element isn't already playing this exact track
-             const currentAudioSrc = audioPlayer.currentSrc || audioPlayer.src;
-             const selectedTrackSrc = displayedPlaylist[currentTrackIndex].isLocal ? (displayedPlaylist[currentTrackIndex].objectURL || displayedPlaylist[currentTrackIndex].filePath) : displayedPlaylist[currentTrackIndex].filePath;
-             if (currentAudioSrc !== selectedTrackSrc) {
-                  updateNowPlayingBarUI(displayedPlaylist[currentTrackIndex]);
+        // Update Now Playing bar (only if track selection changed or forced)
+        if (currentTrackIndex !== -1 && currentTrackIndex < displayedPlaylist.length) {
+            const currentAudioSrc = audioPlayer.currentSrc || audioPlayer.src;
+            const selectedTrackSrc = displayedPlaylist[currentTrackIndex].filePath || displayedPlaylist[currentTrackIndex].objectURL;
+            // Only update (which might imply reload by loadTrack indirectly) if necessary
+             if (currentAudioSrc !== selectedTrackSrc || audioPlayer.paused || !isPlaying) {
+                 // If just updating info for already playing track, updateNowPlayingBarUI is enough
+                 // If track changed or needs to start, loadTrack is better.
+                 // For now, just update the bar if it's a different view but same track might be playing
+                 updateNowPlayingBarUI(displayedPlaylist[currentTrackIndex]);
              }
-        } else if (currentView !== 'search') { // Clear bar if view switched and no track selected, except for search
-             updateNowPlayingBarUI(null);
+        } else {
+            updateNowPlayingBarUI(null); // Clear bar if no track or empty list
         }
     }
 
-    // --- Jamendo Search ---
-    async function searchJamendo(query) { /* ... (same as before, but calls switchToView('search')) ... */
-        query = query.trim(); if (!query) { switchToView('internal'); return; } // Revert to internal on empty query
-        console.log(`SEARCH: Jamendo for: "${query}"`); if(mainPlaylistTitleElement) mainPlaylistTitleElement.textContent = `Search: "${query}"`; if(mainContentPlaylistTracksElement) mainContentPlaylistTracksElement.innerHTML = '<p class="empty-playlist-message">Searching...</p>';
+
+    // --- Jamendo Search (Adapted) ---
+    async function searchJamendo(query) {
+        query = query.trim();
+        if (!query) { switchToView('internal', 0, true); return; } // Revert to internal on empty query
+        console.log(`SEARCH: Jamendo for: "${query}"`);
+        if(mainPlaylistTitleElement) mainPlaylistTitleElement.textContent = `Searching Jamendo for "${query}"...`;
+        if(mainContentPlaylistTracksElement) mainContentPlaylistTracksElement.innerHTML = '<p class="empty-playlist-message">Searching...</p>';
         try {
-            const response = await fetch(`/api/jamendo/search?query=${encodeURIComponent(query)}`);
-            if (!response.ok) throw new Error(`Search API error! Status: ${response.status}`); const searchResults = await response.json(); console.log("SEARCH: Received Jamendo results:", searchResults);
-            displayedPlaylist = searchResults.map(s => ({...s, isLocal: false}));
-            switchToView('search'); // Set view type and render results
-            if (searchResults.length === 0 && mainContentPlaylistTracksElement) mainContentPlaylistTracksElement.innerHTML = `<p class="empty-playlist-message">No results for "${query}".</p>`;
-        } catch (error) { console.error("SEARCH: Failed:", error); if(mainContentPlaylistTracksElement) mainContentPlaylistTracksElement.innerHTML = `<p class="empty-playlist-message" style="color:red;">Search failed.</p>`; }
+            const searchResults = await fetchAPI(`/api/jamendo/search?query=${encodeURIComponent(query)}`);
+            console.log("SEARCH: Received Jamendo results:", searchResults);
+            displayedPlaylist = (searchResults || []).map(s => ({ ...s, id: String(s.id), isLocal: false })); // Ensure ID is string
+            switchToView('search', -1, true); // Display search results, don't auto-select
+            if (displayedPlaylist.length === 0 && mainContentPlaylistTracksElement) mainContentPlaylistTracksElement.innerHTML = `<p class="empty-playlist-message">No Jamendo results for "${query}".</p>`;
+        } catch (error) {
+            console.error("SEARCH: Failed:", error);
+            if(mainPlaylistTitleElement) mainPlaylistTitleElement.textContent = `Search Failed`;
+            if(mainContentPlaylistTracksElement) mainContentPlaylistTracksElement.innerHTML = `<p class="empty-playlist-message" style="color:red;">Jamendo search failed: ${error.message}</p>`;
+        }
     }
 
-    // --- File Upload ---
-    function openUploadModal() { /* ... (same) ... */ if (uploadModalContainer) uploadModalContainer.classList.add('active'); }
-    function closeUploadModal() { /* ... (same) ... */ if (uploadModalContainer) uploadModalContainer.classList.remove('active'); if(uploadProgressList) uploadProgressList.innerHTML = '';}
-    function handleFileUpload(files) { /* ... (same - adds to currentInternalPlaylist, calls switchToView('internal')) ... */
-        if (!files || files.length === 0) return; console.log("UPLOAD: Files:", files); if (uploadProgressList) uploadProgressList.innerHTML = ''; const newSongs = [];
-        Array.from(files).forEach(file => { if (file.type.startsWith('audio/')) { const li=document.createElement('li');li.textContent=`Processing:${file.name}...`;if(uploadProgressList)uploadProgressList.appendChild(li); const objectURL=URL.createObjectURL(file); const newSong={id:`local-${Date.now()}-${Math.random().toString(36).substring(2,7)}`,title:file.name.replace(/\.[^/.]+$/,"")||"Uploaded",artist:"Local",album:"Uploads",filePath:objectURL,coverPath:DEFAULT_COVER,isLocal:true,objectURL:objectURL}; newSongs.push(newSong); li.textContent = `Added: ${newSong.title}`; } else { /* error item */ } });
-        if (newSongs.length > 0) { const wasEmpty = currentInternalPlaylist.length === 0; currentInternalPlaylist.push(...newSongs);
-            switchToView('internal', wasEmpty ? 0 : currentInternalPlaylist.length - newSongs.length); // Switch view, select first new song
-            if (wasEmpty) { loadTrack(displayedPlaylist, 0, false); } // Load if list was empty
-            else { updateNowPlayingBarUI(displayedPlaylist[currentTrackIndex]); } // Just update bar
-        } if (fileUploadInput) fileUploadInput.value = '';
-     }
-
-
-    // --- Attaching Event Listeners ---
+    // --- Attaching Event Listeners (Auth, Player, Upload, Search, Nav) ---
     console.log("--- Attaching Event Listeners ---");
-    // Player Controls
-    if (playPauseBtn) playPauseBtn.addEventListener('click', togglePlayPause); else console.error("Listener skip: playPauseBtn");
-    if (nextBtn) nextBtn.addEventListener('click', playNextTrackLogic); else console.error("Listener skip: nextBtn");
-    if (prevBtn) prevBtn.addEventListener('click', playPrevTrackLogic); else console.error("Listener skip: prevBtn");
-    if (progressBar) progressBar.addEventListener('input', (e) => { if (audioPlayer?.duration && isFinite(audioPlayer.duration)) audioPlayer.currentTime = parseFloat(e.target.value); }); else console.error("Listener skip: progressBar");
-    if (volumeSlider && audioPlayer) { volumeSlider.addEventListener('input', (e) => { audioPlayer.volume = parseFloat(e.target.value); }); audioPlayer.addEventListener('volumechange', () => { volumeSlider.value = audioPlayer.volume; /* + icon update */ if(!volumeIcon)return; if(audioPlayer.muted||audioPlayer.volume===0)volumeIcon.className='fa-solid fa-volume-xmark';else if(audioPlayer.volume<0.5)volumeIcon.className='fa-solid fa-volume-low';else volumeIcon.className='fa-solid fa-volume-high'; }); } else console.error("Listener skip: volumeSlider/audioPlayer");
-    if (volumeIconBtn && audioPlayer) volumeIconBtn.addEventListener('click', () => { audioPlayer.muted = !audioPlayer.muted; }); else console.error("Listener skip: volumeIconBtn/audioPlayer");
-    if (shuffleBtn) shuffleBtn.addEventListener('click', () => { isShuffleActive = !isShuffleActive; shuffleBtn.classList.toggle('active', isShuffleActive); console.log("Shuffle:", isShuffleActive); }); else console.error("Listener skip: shuffleBtn");
-    if (repeatBtn) { repeatBtn.addEventListener('click', () => { repeatMode = (repeatMode + 1) % 3; const i = repeatBtn.querySelector('i'); if(i){ repeatBtn.classList.toggle('active', repeatMode!==0); if(repeatMode===1) i.className='fa-solid fa-repeat-1'; else i.className='fa-solid fa-repeat';} console.log("Repeat:", repeatMode); }); } else console.error("Listener skip: repeatBtn");
-    if(likeBtn && audioPlayer){ likeBtn.addEventListener('click', () => { const currentTrack = displayedPlaylist[currentTrackIndex]; if (currentTrack) toggleLikeSong(currentTrack.id); updateNowPlayingBarUI(currentTrack); }); } else console.error("Listener skip: likeBtn/audioPlayer"); // Footer like button
+    // Auth Modals & Header
+    if (loginTriggerBtn) loginTriggerBtn.addEventListener('click', openLoginModal);
+    if (registerTriggerBtn) registerTriggerBtn.addEventListener('click', openRegisterModal);
+    if (closeLoginModalBtn) closeLoginModalBtn.addEventListener('click', closeLoginModal);
+    if (closeRegisterModalBtn) closeRegisterModalBtn.addEventListener('click', closeRegisterModal);
+    if (switchToRegister) switchToRegister.addEventListener('click', (e) => { e.preventDefault(); openRegisterModal(); });
+    if (switchToLogin) switchToLogin.addEventListener('click', (e) => { e.preventDefault(); openLoginModal(); });
+    if (loginForm) loginForm.addEventListener('submit', handleLogin);
+    if (registerForm) registerForm.addEventListener('submit', handleRegister);
+    if (logoutBtn) logoutBtn.addEventListener('click', handleLogout);
 
-    // Audio Player Events
+    // Player Controls (your existing listeners)
+    if (playPauseBtn) playPauseBtn.addEventListener('click', togglePlayPause);
+    if (nextBtn) nextBtn.addEventListener('click', playNextTrackLogic);
+    if (prevBtn) prevBtn.addEventListener('click', playPrevTrackLogic);
+    if (progressBar) progressBar.addEventListener('input', (e) => { if (audioPlayer?.duration && isFinite(audioPlayer.duration)) audioPlayer.currentTime = parseFloat(e.target.value); });
+    if (volumeSlider && audioPlayer) { /* ... your volume listeners ... */ }
+    if (volumeIconBtn && audioPlayer) { /* ... your mute listener ... */ }
+    if (shuffleBtn) { /* ... your shuffle listener ... */ }
+    if (repeatBtn) { /* ... your repeat listener ... */ }
+    if(likeBtn && audioPlayer){ likeBtn.addEventListener('click', () => { const currentTrack = displayedPlaylist[currentTrackIndex]; if (currentTrack) toggleLikeSong(currentTrack.id); }); }
+
+    // Audio Player Events (your existing listeners)
     if (audioPlayer) {
         audioPlayer.addEventListener('loadedmetadata', handleAudioMetadataLoaded);
         audioPlayer.addEventListener('timeupdate', updateProgressBarOnTimeUpdate);
         audioPlayer.addEventListener('play', () => { isPlaying = true; updatePlayPauseButtonVisualState(); });
         audioPlayer.addEventListener('pause', () => { isPlaying = false; updatePlayPauseButtonVisualState(); });
-        audioPlayer.addEventListener('ended', () => { /* ... ended logic (uses playNextTrackLogic) ... */ console.log("PLAYER: Ended. Repeat:"+repeatMode); isPlaying = false; updatePlayPauseButtonVisualState(); if(repeatMode===1)loadTrack(displayedPlaylist,currentTrackIndex,true); else if(repeatMode===2 || isShuffleActive || currentTrackIndex<displayedPlaylist.length-1) playNextTrackLogic(); else console.log("PLAYER: End of playlist."); });
-        audioPlayer.addEventListener('error', (e) => { /* ... error logging ... */ });
-    } else console.error("Listener skip: audioPlayer - CORE FAIL");
+        audioPlayer.addEventListener('ended', () => { console.log("PLAYER: Ended. Repeat:"+repeatMode); isPlaying = false; updatePlayPauseButtonVisualState(); if(repeatMode===1)loadTrack(displayedPlaylist,currentTrackIndex,true); else if(repeatMode===2 || isShuffleActive || currentTrackIndex<displayedPlaylist.length-1) playNextTrackLogic(); else console.log("PLAYER: End of playlist."); });
+        audioPlayer.addEventListener('error', (e) => { console.error("Audio Player Error:", e, audioPlayer.error); alert(`Audio error: ${audioPlayer.error?.message || 'Unknown audio error'}. Check console.`); });
+    } else console.error("CRITICAL: audioPlayer element not found!");
 
-    // Upload Listeners
-    if (uploadTrigger) uploadTrigger.addEventListener('click', openUploadModal); else console.error("Listener skip: uploadTrigger");
-    if (closeUploadModalBtn) closeUploadModalBtn.addEventListener('click', closeUploadModal); else console.error("Listener skip: closeUploadModalBtn");
-    if (fileUploadInput) fileUploadInput.addEventListener('change', (event) => handleFileUpload(event.target.files)); else console.error("Listener skip: fileUploadInput");
-    if (dropZone) { /* ... dropzone listeners ... */ } else console.error("Listener skip: dropZone");
+    // Upload Listeners (your existing listeners, ensure handleFileUpload is called)
+    if (uploadTrigger) uploadTrigger.addEventListener('click', () => { if(currentUser) openUploadModal(); else openLoginModal();});
+    if (closeUploadModalBtn) closeUploadModalBtn.addEventListener('click', closeUploadModal);
+    if (fileUploadInput) fileUploadInput.addEventListener('change', (event) => handleFileUpload(event.target.files));
+    if (dropZone) { /* ... your dropzone listeners if implemented ... */ }
 
-    // Search Listeners
+    // Search Listeners (your existing listeners)
     if (jamendoSearchButton && jamendoSearchInput) {
         jamendoSearchButton.addEventListener('click', () => searchJamendo(jamendoSearchInput.value));
         jamendoSearchInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') searchJamendo(jamendoSearchInput.value); });
-    } else console.error("Listener skip: Jamendo search elements");
+    }
 
-    // Sidebar Navigation Listeners (Add these)
-    // IMPORTANT: Add id="homeNavItem" and id="likedSongsNavItem" to the corresponding <li> elements in your index.html sidebar
-    const homeNavItemElem = document.getElementById('homeNavItem');
-    if(homeNavItemElem) {
-        homeNavItemElem.addEventListener('click', (e) => {
-            e.preventDefault(); // Prevent default if it's a link
-             document.querySelectorAll('.main-nav li').forEach(li => li.classList.remove('active')); // Update nav highlight
-             homeNavItemElem.classList.add('active');
-             switchToView('internal'); // Switch to internal playlist view
-        });
-    } else console.warn("Sidebar item 'homeNavItem' not found for listener.");
+    // Sidebar Navigation
+    if (homeNavItem) homeNavItem.closest('li').addEventListener('click', (e) => { e.preventDefault(); switchToView('internal'); });
+    if (likedSongsNavItem) likedSongsNavItem.closest('li').addEventListener('click', (e) => { e.preventDefault(); if(currentUser) switchToView('liked'); else openLoginModal(); });
+    // Add listeners for other nav items if they switch views (e.g., "Search", "Explore")
 
-    const likedSongsNavItemElem = document.getElementById('likedSongsNavItem');
-     if(likedSongsNavItemElem) {
-        likedSongsNavItemElem.addEventListener('click', (e) => {
-             e.preventDefault(); // Prevent default if it's a link
-             document.querySelectorAll('.main-nav li').forEach(li => li.classList.remove('active')); // Update nav highlight
-             likedSongsNavItemElem.classList.add('active');
-            switchToView('liked'); // Switch to liked songs view
-        });
-     } else console.warn("Sidebar item 'likedSongsNavItem' not found for listener.");
-
-
-    // Keyboard shortcuts
-    document.addEventListener('keydown', (e) => { /* ... (same) ... */ });
-
+    // Keyboard shortcuts (your existing listener)
+    document.addEventListener('keydown', (e) => { /* ... */ });
 
     // --- Initial Setup ---
-    console.log("PLAYER: Initializing player...");
-    if (volumeSlider && audioPlayer) audioPlayer.volume = parseFloat(volumeSlider.value); else if (audioPlayer) audioPlayer.volume = 0.8;
+    console.log("PLAYER: Initializing UI and Auth State...");
+    if (volumeSlider && audioPlayer) audioPlayer.volume = parseFloat(volumeSlider.value); else if (audioPlayer) audioPlayer.volume = 0.8; // Default
     updatePlayPauseButtonVisualState();
-    fetchInitialPlaylist(); // Fetch local/initial songs
+    checkAuthState(); // This will fetch user status and then trigger playlist load
 
-    console.log("main.js execution finished.");
-}); // End of DOMContentLoaded
+    console.log("main.js execution finished and fully initialized.");
+});
